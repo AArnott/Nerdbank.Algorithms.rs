@@ -19,17 +19,11 @@ bitflags! {
     }
 }
 
-#[derive(Debug)]
-pub enum Constraint<TNodeState: Copy> {
-    SelectionCount(SelectionCountConstraint),
-    SetOneNodeValue(SetOneNodeValueConstraint<TNodeState>),
-}
-
 pub struct Scenario<TNode, TNodeState: Copy, const NODE_COUNT: usize> {
     /// The selection state for each node.
     pub selection_state: [Option<TNodeState>; NODE_COUNT],
     pub nodes: [TNode; NODE_COUNT],
-    constraints: Vec<Constraint<TNodeState>>,
+    constraints: Vec<Box<dyn IConstraint<TNodeState>>>,
 }
 
 impl<TNode, TNodeState: Copy, const NODE_COUNT: usize> Scenario<TNode, TNodeState, NODE_COUNT> {
@@ -41,11 +35,11 @@ impl<TNode, TNodeState: Copy, const NODE_COUNT: usize> Scenario<TNode, TNodeStat
         }
     }
 
-    pub fn add_constraint(&mut self, constraint: Constraint<TNodeState>) {
+    pub fn add_constraint(&mut self, constraint: Box<dyn IConstraint<TNodeState>>) {
         self.constraints.push(constraint);
     }
 
-    pub fn get_constraints<'a>(&'a self) -> &'a [Constraint<TNodeState>] {
+    pub fn get_constraints<'a>(&'a self) -> &'a [Box<dyn IConstraint<TNodeState>>] {
         &self.constraints
     }
 }
@@ -90,16 +84,16 @@ pub trait IConstraint<TNodeState: Copy> {
 }
 
 #[derive(Debug)]
-pub struct SelectionCountConstraint {
-    /// A vector of indexes into scenario nodes that are included in this constraint.
-    pub nodes: Vec<usize>,
+pub struct SelectionCountConstraint<const NODE_COUNT: usize> {
+    /// An array of indexes into scenario nodes that are included in this constraint.
+    pub nodes: [usize; NODE_COUNT],
     /// The minimum allowable nodes that may be selected.
     pub min: usize,
     /// The maximum allowable nodes that may be selected.
     pub max: usize,
 }
 
-impl IConstraint<bool> for SelectionCountConstraint {
+impl<const NODE_COUNT: usize> IConstraint<bool> for SelectionCountConstraint<NODE_COUNT> {
     fn get_state(&self, scenario: &dyn ScenarioTrait<bool>) -> ConstraintStates {
         let stats = self.get_node_stats(scenario);
         let mut states = ConstraintStates::NONE;
@@ -111,7 +105,7 @@ impl IConstraint<bool> for SelectionCountConstraint {
             }
         }
 
-        if SelectionCountConstraint::is_resolved(&stats) {
+        if stats.is_resolved() {
             states |= ConstraintStates::RESOLVED;
         } else {
             if self.can_resolve_by_selecting(&stats) || self.can_resolve_by_unselecting(&stats) {
@@ -140,17 +134,13 @@ impl IConstraint<bool> for SelectionCountConstraint {
     }
 }
 
-impl SelectionCountConstraint {
+impl<const NODE_COUNT: usize> SelectionCountConstraint<NODE_COUNT> {
     fn is_satisfiable(&self, stats: &NodeStats) -> bool {
         self.min <= stats.selected + stats.indeterminate && self.max >= stats.selected
     }
 
     fn is_satisfied(&self, stats: &NodeStats) -> bool {
         self.min <= stats.selected && self.max >= stats.selected
-    }
-
-    fn is_resolved(stats: &NodeStats) -> bool {
-        stats.indeterminate == 0
     }
 
     fn can_resolve_by_selecting(&self, stats: &NodeStats) -> bool {
@@ -251,4 +241,10 @@ struct NodeStats {
     selected: usize,
     unselected: usize,
     indeterminate: usize,
+}
+
+impl NodeStats {
+    fn is_resolved(&self) -> bool {
+        self.indeterminate == 0
+    }
 }
