@@ -1,5 +1,7 @@
 # Nerdbank.Algorithms for Rust
 
+[![Build status](https://github.com/AArnott/Nerdbank.Algorithms.rs/actions/workflows/rust.yml/badge.svg)](https://github.com/AArnott/Nerdbank.Algorithms.rs/actions/workflows/rust.yml)
+
 This project contains a collection of popular algorithms I've found useful in some fun projects.
 
 ## Work in progress
