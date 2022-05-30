@@ -18,12 +18,17 @@ bitflags! {
     }
 }
 
-#[derive(Clone)]
 pub struct Scenario<'nodes, 'constraints, TNode, TNodeState: Copy, const NODE_COUNT: usize> {
     /// The selection state for each node.
     pub selection_state: [Option<TNodeState>; NODE_COUNT],
     pub nodes: &'nodes [TNode; NODE_COUNT],
     pub constraints: Vec<&'constraints dyn IConstraint<TNodeState>>,
+}
+
+impl<'nodes, 'constraints, TNode, TNodeState: Copy, const NODE_COUNT: usize> Clone for Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT> {
+    fn clone(&self) -> Self {
+        Self { selection_state: self.selection_state.clone(), nodes: self.nodes, constraints: self.constraints.clone() }
+    }
 }
 
 impl<'nodes, 'constraints, TNode, TNodeState: Copy, const NODE_COUNT: usize>
@@ -276,6 +281,7 @@ pub struct SolutionBuilder<
 > {
     pub scenario: Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT>,
     _resolved_states: [TNodeState; NODE_STATE_COUNT],
+    full_refresh_needed: bool,
 }
 
 impl<
@@ -295,6 +301,37 @@ impl<
         SolutionBuilder {
             scenario: Scenario::new(nodes),
             _resolved_states: resolved_states,
+            full_refresh_needed: false,
+        }
+    }
+
+    pub fn resolve_partially(&mut self) {
+        let mut candidate = self.scenario.clone();
+        if self.full_refresh_needed {
+            for i in 0..NODE_COUNT {
+                candidate.reset_node_state(i, None);
+            }
+        }
+
+        Self::resolve_scenario_partially(&mut candidate);
+        self.scenario = candidate;
+        self.full_refresh_needed = false
+    }
+
+    fn resolve_scenario_partially(scenario: &mut Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT>) {
+        // Keep looping through constraints asking each one to resolve nodes until no changes are applied.
+        loop {
+            let mut any_resolved = false;
+
+            for i in 0..scenario.constraints.len() {
+                let constraint = scenario.constraints[i];
+                let resolved = constraint.resolve(scenario);
+                any_resolved |= resolved;
+            }
+
+            if !any_resolved {
+                break;
+            }
         }
     }
 }

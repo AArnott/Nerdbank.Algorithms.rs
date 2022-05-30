@@ -1,7 +1,7 @@
 #[cfg(test)]
 
 use nerdbank_algorithms::node_constraint_selection::{Scenario, SelectionCountConstraint };
-use nerdbank_algorithms::node_constraint_selection::SolutionBuilder;
+use nerdbank_algorithms::node_constraint_selection::{SolutionBuilder, ScenarioTrait};
 
 #[test]
 fn nodes_retained() {
@@ -28,4 +28,30 @@ fn create_solution_builder() {
     let builder = SolutionBuilder::new(&["A", "B", "C"], [true, false]);
     assert_eq!(["A", "B", "C"], *builder.scenario.nodes);
     assert_eq!(None, builder[0]);
+}
+
+#[test]
+fn solution_builder_resolve_partially() {
+    let mut builder = SolutionBuilder::new(&["A", "B", "C"], [true, false]);
+    builder.scenario.add_constraint(&SelectionCountConstraint {
+        nodes: [0, 1, 2],
+        min: 1,
+        max: 2,
+    });
+    builder.resolve_partially();
+    assert_eq!(None, builder[0]);
+    assert_eq!(None, builder[1]);
+    assert_eq!(None, builder[2]);
+
+    builder.scenario.set_node_state(0, true);
+    builder.resolve_partially();
+    assert_eq!(Some(true), builder[0]);
+    assert_eq!(None, builder[1]);
+    assert_eq!(None, builder[2]);
+
+    builder.scenario.set_node_state(1, true);
+    builder.resolve_partially();
+    assert_eq!(Some(true), builder[0]);
+    assert_eq!(Some(true), builder[1]);
+    assert_eq!(Some(false), builder[2]);
 }
