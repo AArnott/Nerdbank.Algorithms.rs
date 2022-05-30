@@ -1,6 +1,6 @@
 #[cfg(test)]
 
-use nerdbank_algorithms::{Scenario, SelectionCountConstraint };
+use nerdbank_algorithms::node_constraint_selection::{Scenario, SelectionCountConstraint };
 
 #[test]
 fn nodes_retained() {
