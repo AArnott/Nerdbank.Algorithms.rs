@@ -18,20 +18,21 @@ bitflags! {
     }
 }
 
-pub struct Scenario<'nodes, 'constraints, TNode, TNodeState: Copy, const NODE_COUNT: usize> {
+pub struct Scenario<'nodes, 'constraints, TNode, TNodeState: Copy + PartialEq, const NODE_COUNT: usize> {
     /// The selection state for each node.
     pub selection_state: [Option<TNodeState>; NODE_COUNT],
     pub nodes: &'nodes [TNode; NODE_COUNT],
     pub constraints: Vec<&'constraints dyn IConstraint<TNodeState>>,
+    version: i32,
 }
 
-impl<'nodes, 'constraints, TNode, TNodeState: Copy, const NODE_COUNT: usize> Clone for Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT> {
+impl<'nodes, 'constraints, TNode, TNodeState: Copy + PartialEq, const NODE_COUNT: usize> Clone for Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT> {
     fn clone(&self) -> Self {
-        Self { selection_state: self.selection_state.clone(), nodes: self.nodes, constraints: self.constraints.clone() }
+        Self { selection_state: self.selection_state.clone(), nodes: self.nodes, constraints: self.constraints.clone(), version: self.version }
     }
 }
 
-impl<'nodes, 'constraints, TNode, TNodeState: Copy, const NODE_COUNT: usize>
+impl<'nodes, 'constraints, TNode, TNodeState: Copy + PartialEq, const NODE_COUNT: usize>
     Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT>
 {
     pub fn new(
@@ -41,6 +42,7 @@ impl<'nodes, 'constraints, TNode, TNodeState: Copy, const NODE_COUNT: usize>
             selection_state: [None; NODE_COUNT],
             nodes: nodes,
             constraints: Vec::new(),
+            version: 0,
         }
     }
 
@@ -49,21 +51,23 @@ impl<'nodes, 'constraints, TNode, TNodeState: Copy, const NODE_COUNT: usize>
     }
 
     pub fn add_constraint(&mut self, constraint: &'constraints dyn IConstraint<TNodeState>) {
-        self.constraints.push(constraint)
+        self.version += 1;
+        self.constraints.push(constraint);
     }
 
     pub fn remove_constraint(&mut self, index: usize) -> &dyn IConstraint<TNodeState> {
+        self.version += 1;
         self.constraints.remove(index)
     }
 }
 
-pub trait ScenarioTrait<TNodeState: Copy> {
+pub trait ScenarioTrait<TNodeState: Copy + PartialEq> {
     fn get_node_state<'nodes>(&'nodes self, index: usize) -> &'nodes Option<TNodeState>;
     fn set_node_state(&mut self, index: usize, value: TNodeState);
     fn reset_node_state(&mut self, index: usize, value: Option<TNodeState>);
 }
 
-impl<'nodes, 'constraints, TNode, TNodeState: Copy, const NODE_COUNT: usize>
+impl<'nodes, 'constraints, TNode, TNodeState: Copy + PartialEq + PartialEq, const NODE_COUNT: usize>
     ScenarioTrait<TNodeState> for Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT>
 {
     fn get_node_state<'a>(&'a self, index: usize) -> &'a Option<TNodeState> {
@@ -72,18 +76,21 @@ impl<'nodes, 'constraints, TNode, TNodeState: Copy, const NODE_COUNT: usize>
 
     fn set_node_state(&mut self, index: usize, value: TNodeState) {
         if let None = self.selection_state[index] {
-            self.selection_state[index] = Some(value);
+            self.reset_node_state(index, Some(value));
         } else {
             panic!("Node is already set.");
         }
     }
 
     fn reset_node_state(&mut self, index: usize, value: Option<TNodeState>) {
-        self.selection_state[index] = value;
+        if !self.selection_state[index].eq(&value) {
+            self.selection_state[index] = value;
+            self.version += 1;
+        }
     }
 }
 
-impl<'nodes, 'constraints, TNode, TNodeState: Copy, const NODE_COUNT: usize> Index<usize>
+impl<'nodes, 'constraints, TNode, TNodeState: Copy + PartialEq, const NODE_COUNT: usize> Index<usize>
     for Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT>
 {
     type Output = Option<TNodeState>;
@@ -94,7 +101,7 @@ impl<'nodes, 'constraints, TNode, TNodeState: Copy, const NODE_COUNT: usize> Ind
 
 /// Describes some known constraint on the final solution
 /// and tests whether a partial solution satisfies the constraint.
-pub trait IConstraint<TNodeState: Copy> {
+pub trait IConstraint<TNodeState: Copy + PartialEq> {
     /// Gets the state of the constraint with respect to a given scenario.
     /// # Returns
     /// A collection of flags that represent the state.
@@ -226,12 +233,12 @@ impl<const NODE_COUNT: usize> SelectionCountConstraint<NODE_COUNT> {
 }
 
 #[derive(Debug)]
-pub struct SetOneNodeValueConstraint<TNodeState: Copy> {
+pub struct SetOneNodeValueConstraint<TNodeState: Copy + PartialEq> {
     node: usize,
     value: TNodeState,
 }
 
-impl<TNodeState: Copy + Eq> IConstraint<TNodeState> for SetOneNodeValueConstraint<TNodeState> {
+impl<TNodeState: Copy + PartialEq + Eq> IConstraint<TNodeState> for SetOneNodeValueConstraint<TNodeState> {
     fn get_state(&self, scenario: &dyn ScenarioTrait<TNodeState>) -> ConstraintStates {
         match scenario.get_node_state(self.node) {
             None => {
@@ -275,7 +282,7 @@ pub struct SolutionBuilder<
     'nodes,
     'constraints,
     TNode,
-    TNodeState: Copy,
+    TNodeState: Copy + PartialEq,
     const NODE_COUNT: usize,
     const NODE_STATE_COUNT: usize,
 > {
@@ -288,7 +295,7 @@ impl<
         'nodes,
         'constraints,
         TNode,
-        TNodeState: Copy,
+        TNodeState: Copy + PartialEq,
         const NODE_COUNT: usize,
         const NODE_STATE_COUNT: usize,
     > SolutionBuilder<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT, NODE_STATE_COUNT>
@@ -325,7 +332,12 @@ impl<
 
             for i in 0..scenario.constraints.len() {
                 let constraint = scenario.constraints[i];
+                let prior_version = scenario.version;
                 let resolved = constraint.resolve(scenario);
+                if resolved && prior_version == scenario.version {
+                    panic!("Constraint returned true without changing the scenario.");
+                }
+
                 any_resolved |= resolved;
             }
 
@@ -340,7 +352,7 @@ impl<
         'nodes,
         'constraints,
         TNode,
-        TNodeState: Copy,
+        TNodeState: Copy + PartialEq,
         const NODE_COUNT: usize,
         const NODE_STATE_COUNT: usize,
     > Index<usize>
