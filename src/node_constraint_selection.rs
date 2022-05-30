@@ -1,4 +1,4 @@
-use std::ops::{Index};
+use std::ops::Index;
 
 bitflags! {
     /// Describes the present state of a constraint.
@@ -18,15 +18,20 @@ bitflags! {
     }
 }
 
-pub struct Scenario<'nodes, TNode, TNodeState: Copy, const NODE_COUNT: usize> {
+#[derive(Clone)]
+pub struct Scenario<'nodes, 'constraints, TNode, TNodeState: Copy, const NODE_COUNT: usize> {
     /// The selection state for each node.
     pub selection_state: [Option<TNodeState>; NODE_COUNT],
     pub nodes: &'nodes [TNode; NODE_COUNT],
-    constraints: Vec<Box<dyn IConstraint<TNodeState>>>,
+    pub constraints: Vec<&'constraints dyn IConstraint<TNodeState>>,
 }
 
-impl<'nodes, TNode, TNodeState: Copy, const NODE_COUNT: usize> Scenario<'nodes, TNode, TNodeState, NODE_COUNT> {
-    pub fn new(nodes: &'nodes [TNode; NODE_COUNT]) -> Scenario<'nodes, TNode, TNodeState, NODE_COUNT> {
+impl<'nodes, 'constraints, TNode, TNodeState: Copy, const NODE_COUNT: usize>
+    Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT>
+{
+    pub fn new(
+        nodes: &'nodes [TNode; NODE_COUNT],
+    ) -> Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT> {
         Scenario {
             selection_state: [None; NODE_COUNT],
             nodes: nodes,
@@ -34,15 +39,15 @@ impl<'nodes, TNode, TNodeState: Copy, const NODE_COUNT: usize> Scenario<'nodes, 
         }
     }
 
-    pub fn add_constraint(&mut self, constraint: Box<dyn IConstraint<TNodeState>>) {
-        self.constraints.push(constraint);
-    }
-
-    pub fn get_constraints<'a>(&'a self) -> &'a [Box<dyn IConstraint<TNodeState>>] {
+    pub fn get_constraints<'a>(&'a self) -> &Vec<&dyn IConstraint<TNodeState>> {
         &self.constraints
     }
 
-    pub fn remove_constraint(&mut self, index: usize) -> Box<dyn IConstraint<TNodeState>> {
+    pub fn add_constraint(&mut self, constraint: &'constraints dyn IConstraint<TNodeState>) {
+        self.constraints.push(constraint)
+    }
+
+    pub fn remove_constraint(&mut self, index: usize) -> &dyn IConstraint<TNodeState> {
         self.constraints.remove(index)
     }
 }
@@ -53,8 +58,8 @@ pub trait ScenarioTrait<TNodeState: Copy> {
     fn reset_node_state(&mut self, index: usize, value: Option<TNodeState>);
 }
 
-impl<'nodes, TNode, TNodeState: Copy, const NODE_COUNT: usize> ScenarioTrait<TNodeState>
-    for Scenario<'nodes, TNode, TNodeState, NODE_COUNT>
+impl<'nodes, 'constraints, TNode, TNodeState: Copy, const NODE_COUNT: usize>
+    ScenarioTrait<TNodeState> for Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT>
 {
     fn get_node_state<'a>(&'a self, index: usize) -> &'a Option<TNodeState> {
         &self[index]
@@ -73,7 +78,9 @@ impl<'nodes, TNode, TNodeState: Copy, const NODE_COUNT: usize> ScenarioTrait<TNo
     }
 }
 
-impl<'nodes, TNode, TNodeState: Copy, const NODE_COUNT: usize> Index<usize> for Scenario<'nodes, TNode, TNodeState, NODE_COUNT> {
+impl<'nodes, 'constraints, TNode, TNodeState: Copy, const NODE_COUNT: usize> Index<usize>
+    for Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT>
+{
     type Output = Option<TNodeState>;
     fn index<'a>(&'a self, i: usize) -> &'a Option<TNodeState> {
         &self.selection_state[i]
@@ -259,29 +266,49 @@ impl NodeStats {
     }
 }
 
-pub struct SolutionBuilder<'nodes, TNode, TNodeState: Copy, const NODE_COUNT: usize, const NODE_STATE_COUNT: usize> {
-    pub scenario: Scenario<'nodes, TNode, TNodeState, NODE_COUNT>,
+pub struct SolutionBuilder<
+    'nodes,
+    'constraints,
+    TNode,
+    TNodeState: Copy,
+    const NODE_COUNT: usize,
+    const NODE_STATE_COUNT: usize,
+> {
+    pub scenario: Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT>,
     _resolved_states: [TNodeState; NODE_STATE_COUNT],
 }
 
-impl<'nodes, TNode, TNodeState: Copy, const NODE_COUNT: usize, const NODE_STATE_COUNT: usize> SolutionBuilder<'nodes, TNode, TNodeState, NODE_COUNT, NODE_STATE_COUNT> {
-    pub fn new(nodes: &'nodes [TNode; NODE_COUNT], resolved_states: [TNodeState; NODE_STATE_COUNT]) -> SolutionBuilder<'nodes, TNode, TNodeState, NODE_COUNT, NODE_STATE_COUNT> {
+impl<
+        'nodes,
+        'constraints,
+        TNode,
+        TNodeState: Copy,
+        const NODE_COUNT: usize,
+        const NODE_STATE_COUNT: usize,
+    > SolutionBuilder<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT, NODE_STATE_COUNT>
+{
+    pub fn new(
+        nodes: &'nodes [TNode; NODE_COUNT],
+        resolved_states: [TNodeState; NODE_STATE_COUNT],
+    ) -> SolutionBuilder<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT, NODE_STATE_COUNT>
+    {
         SolutionBuilder {
             scenario: Scenario::new(nodes),
             _resolved_states: resolved_states,
         }
     }
-
-    pub fn add_constraint(&mut self, constraint: Box<dyn IConstraint<TNodeState>>) {
-        self.scenario.add_constraint(constraint)
-    }
-
-    pub fn remove_constraint(&mut self, index: usize) -> Box<dyn IConstraint<TNodeState>>{
-        self.scenario.remove_constraint(index)
-    }
 }
 
-impl<'nodes, TNode, TNodeState: Copy, const NODE_COUNT: usize, const NODE_STATE_COUNT: usize> Index<usize> for SolutionBuilder<'nodes, TNode, TNodeState, NODE_COUNT, NODE_STATE_COUNT> {
+impl<
+        'nodes,
+        'constraints,
+        TNode,
+        TNodeState: Copy,
+        const NODE_COUNT: usize,
+        const NODE_STATE_COUNT: usize,
+    > Index<usize>
+    for SolutionBuilder<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT, NODE_STATE_COUNT>
+{
     type Output = Option<TNodeState>;
     fn index<'a>(&'a self, i: usize) -> &'a Option<TNodeState> {
         &self.scenario.get_node_state(i)
