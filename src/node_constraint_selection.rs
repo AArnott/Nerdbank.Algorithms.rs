@@ -18,15 +18,15 @@ bitflags! {
     }
 }
 
-pub struct Scenario<TNode, TNodeState: Copy, const NODE_COUNT: usize> {
+pub struct Scenario<'nodes, TNode, TNodeState: Copy, const NODE_COUNT: usize> {
     /// The selection state for each node.
     pub selection_state: [Option<TNodeState>; NODE_COUNT],
-    pub nodes: [TNode; NODE_COUNT],
+    pub nodes: &'nodes [TNode; NODE_COUNT],
     constraints: Vec<Box<dyn IConstraint<TNodeState>>>,
 }
 
-impl<TNode, TNodeState: Copy, const NODE_COUNT: usize> Scenario<TNode, TNodeState, NODE_COUNT> {
-    pub fn new(nodes: [TNode; NODE_COUNT]) -> Scenario<TNode, TNodeState, NODE_COUNT> {
+impl<'nodes, TNode, TNodeState: Copy, const NODE_COUNT: usize> Scenario<'nodes, TNode, TNodeState, NODE_COUNT> {
+    pub fn new(nodes: &'nodes [TNode; NODE_COUNT]) -> Scenario<'nodes, TNode, TNodeState, NODE_COUNT> {
         Scenario {
             selection_state: [None; NODE_COUNT],
             nodes: nodes,
@@ -48,13 +48,13 @@ impl<TNode, TNodeState: Copy, const NODE_COUNT: usize> Scenario<TNode, TNodeStat
 }
 
 pub trait ScenarioTrait<TNodeState: Copy> {
-    fn get_node_state(&self, index: usize) -> Option<TNodeState>;
+    fn get_node_state<'nodes>(&'nodes self, index: usize) -> &'nodes Option<TNodeState>;
     fn set_node_state(&mut self, index: usize, value: TNodeState);
     fn reset_node_state(&mut self, index: usize, value: Option<TNodeState>);
 }
 
-impl<TNode, TNodeState: Copy, const NODE_COUNT: usize> ScenarioTrait<TNodeState>
-    for Scenario<TNode, TNodeState, NODE_COUNT>
+impl<'nodes, TNode, TNodeState: Copy, const NODE_COUNT: usize> ScenarioTrait<TNodeState>
+    for Scenario<'nodes, TNode, TNodeState, NODE_COUNT>
 {
     fn get_node_state<'a>(&'a self, index: usize) -> &'a Option<TNodeState> {
         &self[index]
@@ -73,10 +73,10 @@ impl<TNode, TNodeState: Copy, const NODE_COUNT: usize> ScenarioTrait<TNodeState>
     }
 }
 
-impl<TNode, TNodeState: Copy, const NODE_COUNT: usize> Index<usize> for Scenario<TNode, TNodeState, NODE_COUNT> {
+impl<'nodes, TNode, TNodeState: Copy, const NODE_COUNT: usize> Index<usize> for Scenario<'nodes, TNode, TNodeState, NODE_COUNT> {
     type Output = Option<TNodeState>;
     fn index<'a>(&'a self, i: usize) -> &'a Option<TNodeState> {
-        &self.get_node_state(i)
+        &self.selection_state[i]
     }
 }
 
@@ -259,13 +259,13 @@ impl NodeStats {
     }
 }
 
-pub struct SolutionBuilder<TNode, TNodeState: Copy, const NODE_COUNT: usize, const NODE_STATE_COUNT: usize> {
-    pub scenario: Scenario<TNode, TNodeState, NODE_COUNT>,
+pub struct SolutionBuilder<'nodes, TNode, TNodeState: Copy, const NODE_COUNT: usize, const NODE_STATE_COUNT: usize> {
+    pub scenario: Scenario<'nodes, TNode, TNodeState, NODE_COUNT>,
     _resolved_states: [TNodeState; NODE_STATE_COUNT],
 }
 
-impl<TNode, TNodeState: Copy, const NODE_COUNT: usize, const NODE_STATE_COUNT: usize> SolutionBuilder<TNode, TNodeState, NODE_COUNT, NODE_STATE_COUNT> {
-    pub fn new(nodes: [TNode; NODE_COUNT], resolved_states: [TNodeState; NODE_STATE_COUNT]) -> SolutionBuilder<TNode, TNodeState, NODE_COUNT, NODE_STATE_COUNT> {
+impl<'nodes, TNode, TNodeState: Copy, const NODE_COUNT: usize, const NODE_STATE_COUNT: usize> SolutionBuilder<'nodes, TNode, TNodeState, NODE_COUNT, NODE_STATE_COUNT> {
+    pub fn new(nodes: &'nodes [TNode; NODE_COUNT], resolved_states: [TNodeState; NODE_STATE_COUNT]) -> SolutionBuilder<'nodes, TNode, TNodeState, NODE_COUNT, NODE_STATE_COUNT> {
         SolutionBuilder {
             scenario: Scenario::new(nodes),
             _resolved_states: resolved_states,
@@ -281,7 +281,7 @@ impl<TNode, TNodeState: Copy, const NODE_COUNT: usize, const NODE_STATE_COUNT: u
     }
 }
 
-impl<TNode, TNodeState: Copy, const NODE_COUNT: usize, const NODE_STATE_COUNT: usize> Index<usize> for SolutionBuilder<TNode, TNodeState, NODE_COUNT, NODE_STATE_COUNT> {
+impl<'nodes, TNode, TNodeState: Copy, const NODE_COUNT: usize, const NODE_STATE_COUNT: usize> Index<usize> for SolutionBuilder<'nodes, TNode, TNodeState, NODE_COUNT, NODE_STATE_COUNT> {
     type Output = Option<TNodeState>;
     fn index<'a>(&'a self, i: usize) -> &'a Option<TNodeState> {
         &self.scenario.get_node_state(i)
