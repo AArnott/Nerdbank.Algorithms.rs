@@ -9,7 +9,7 @@ fn nodes_retained() {
 }
 
 #[test]
-fn add_constraint() {
+fn add_remove_constraint() {
     let mut scenario = Scenario::<&str, bool, 3_usize>::new(["A", "B", "C"]);
     scenario.add_constraint(Box::new(SelectionCountConstraint {
         nodes: [1, 2],
@@ -18,4 +18,6 @@ fn add_constraint() {
     }));
 
     assert_eq!(1, scenario.get_constraints().len());
+    scenario.remove_constraint(0);
+    assert_eq!(0, scenario.get_constraints().len());
 }

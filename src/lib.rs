@@ -42,6 +42,10 @@ impl<TNode, TNodeState: Copy, const NODE_COUNT: usize> Scenario<TNode, TNodeStat
     pub fn get_constraints<'a>(&'a self) -> &'a [Box<dyn IConstraint<TNodeState>>] {
         &self.constraints
     }
+
+    pub fn remove_constraint(&mut self, index: usize) -> Box<dyn IConstraint<TNodeState>> {
+        self.constraints.remove(index)
+    }
 }
 
 pub trait ScenarioTrait<TNodeState: Copy> {
