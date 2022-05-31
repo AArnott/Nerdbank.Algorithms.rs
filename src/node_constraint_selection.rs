@@ -1,4 +1,4 @@
-use std::ops::Index;
+use std::{collections::HashMap, hash::Hash, ops::Index};
 
 bitflags! {
     /// Describes the present state of a constraint.
@@ -18,7 +18,7 @@ bitflags! {
     }
 }
 
-pub struct Scenario<'nodes, 'constraints, TNode, TNodeState: Copy + PartialEq, const NODE_COUNT: usize> {
+pub struct Scenario<'nodes, 'constraints, TNode, TNodeState: Copy + Eq, const NODE_COUNT: usize> {
     /// The selection state for each node.
     pub selection_state: [Option<TNodeState>; NODE_COUNT],
     pub nodes: &'nodes [TNode; NODE_COUNT],
@@ -26,13 +26,20 @@ pub struct Scenario<'nodes, 'constraints, TNode, TNodeState: Copy + PartialEq, c
     version: i32,
 }
 
-impl<'nodes, 'constraints, TNode, TNodeState: Copy + PartialEq, const NODE_COUNT: usize> Clone for Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT> {
+impl<'nodes, 'constraints, TNode, TNodeState: Copy + Eq, const NODE_COUNT: usize> Clone
+    for Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT>
+{
     fn clone(&self) -> Self {
-        Self { selection_state: self.selection_state.clone(), nodes: self.nodes, constraints: self.constraints.clone(), version: self.version }
+        Self {
+            selection_state: self.selection_state.clone(),
+            nodes: self.nodes,
+            constraints: self.constraints.clone(),
+            version: self.version,
+        }
     }
 }
 
-impl<'nodes, 'constraints, TNode, TNodeState: Copy + PartialEq, const NODE_COUNT: usize>
+impl<'nodes, 'constraints, TNode, TNodeState: Copy + Eq, const NODE_COUNT: usize>
     Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT>
 {
     pub fn new(
@@ -61,13 +68,13 @@ impl<'nodes, 'constraints, TNode, TNodeState: Copy + PartialEq, const NODE_COUNT
     }
 }
 
-pub trait ScenarioTrait<TNodeState: Copy + PartialEq> {
+pub trait ScenarioTrait<TNodeState: Copy + Eq> {
     fn get_node_state<'nodes>(&'nodes self, index: usize) -> &'nodes Option<TNodeState>;
     fn set_node_state(&mut self, index: usize, value: TNodeState);
     fn reset_node_state(&mut self, index: usize, value: Option<TNodeState>);
 }
 
-impl<'nodes, 'constraints, TNode, TNodeState: Copy + PartialEq + PartialEq, const NODE_COUNT: usize>
+impl<'nodes, 'constraints, TNode, TNodeState: Copy + Eq + PartialEq, const NODE_COUNT: usize>
     ScenarioTrait<TNodeState> for Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT>
 {
     fn get_node_state<'a>(&'a self, index: usize) -> &'a Option<TNodeState> {
@@ -90,7 +97,7 @@ impl<'nodes, 'constraints, TNode, TNodeState: Copy + PartialEq + PartialEq, cons
     }
 }
 
-impl<'nodes, 'constraints, TNode, TNodeState: Copy + PartialEq, const NODE_COUNT: usize> Index<usize>
+impl<'nodes, 'constraints, TNode, TNodeState: Copy + Eq, const NODE_COUNT: usize> Index<usize>
     for Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT>
 {
     type Output = Option<TNodeState>;
@@ -101,7 +108,7 @@ impl<'nodes, 'constraints, TNode, TNodeState: Copy + PartialEq, const NODE_COUNT
 
 /// Describes some known constraint on the final solution
 /// and tests whether a partial solution satisfies the constraint.
-pub trait IConstraint<TNodeState: Copy + PartialEq> {
+pub trait IConstraint<TNodeState: Copy + Eq> {
     /// Gets the state of the constraint with respect to a given scenario.
     /// # Returns
     /// A collection of flags that represent the state.
@@ -233,12 +240,12 @@ impl<const NODE_COUNT: usize> SelectionCountConstraint<NODE_COUNT> {
 }
 
 #[derive(Debug)]
-pub struct SetOneNodeValueConstraint<TNodeState: Copy + PartialEq> {
+pub struct SetOneNodeValueConstraint<TNodeState: Copy + Eq> {
     node: usize,
     value: TNodeState,
 }
 
-impl<TNodeState: Copy + PartialEq + Eq> IConstraint<TNodeState> for SetOneNodeValueConstraint<TNodeState> {
+impl<TNodeState: Copy + Eq + Eq> IConstraint<TNodeState> for SetOneNodeValueConstraint<TNodeState> {
     fn get_state(&self, scenario: &dyn ScenarioTrait<TNodeState>) -> ConstraintStates {
         match scenario.get_node_state(self.node) {
             None => {
@@ -282,7 +289,7 @@ pub struct SolutionBuilder<
     'nodes,
     'constraints,
     TNode,
-    TNodeState: Copy + PartialEq,
+    TNodeState: Copy + Eq,
     const NODE_COUNT: usize,
     const NODE_STATE_COUNT: usize,
 > {
@@ -295,7 +302,7 @@ impl<
         'nodes,
         'constraints,
         TNode,
-        TNodeState: Copy + PartialEq,
+        TNodeState: Copy + Eq + Hash,
         const NODE_COUNT: usize,
         const NODE_STATE_COUNT: usize,
     > SolutionBuilder<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT, NODE_STATE_COUNT>
@@ -325,7 +332,9 @@ impl<
         self.full_refresh_needed = false
     }
 
-    fn resolve_scenario_partially(scenario: &mut Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT>) {
+    fn resolve_scenario_partially(
+        scenario: &mut Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT>,
+    ) {
         // Keep looping through constraints asking each one to resolve nodes until no changes are applied.
         loop {
             let mut any_resolved = false;
@@ -346,13 +355,48 @@ impl<
             }
         }
     }
+
+    fn enumerate_solutions(
+        basis: &Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT>,
+        first_node: usize,
+        stats: &mut SolutionStats<TNodeState, NODE_COUNT>,
+    ) {
+        stats.considered_scenarios += 1;
+        let mut can_any_constraint_be_broken = false;
+        for j in 0..basis.constraints.len() {
+            let constraint = basis.constraints[j];
+            let state = constraint.get_state(basis);
+            if !state.intersects(ConstraintStates::SATISFIABLE) {
+                return;
+            }
+
+            can_any_constraint_be_broken |= state.intersects(ConstraintStates::BREAKABLE);
+        }
+
+        if stats.stop_after_first_solution_found && !can_any_constraint_be_broken {
+            // There's nothing we can simulate that would break constraints, so everything we might try constitutes a valid solution.
+            // Don't waste time enumerating them.
+            stats.record_solution_found(basis);
+            return;
+        }
+
+        for i in first_node..NODE_COUNT {
+            if let Some(_) = basis.get_node_state(i) {
+                // Skip any node that already has a set value.
+                continue;
+            }
+
+            // We don't need to enumerate possibilities for a node for which no constraints exist.
+
+        }
+    }
 }
 
 impl<
         'nodes,
         'constraints,
         TNode,
-        TNodeState: Copy + PartialEq,
+        TNodeState: Copy + Eq,
         const NODE_COUNT: usize,
         const NODE_STATE_COUNT: usize,
     > Index<usize>
@@ -361,5 +405,31 @@ impl<
     type Output = Option<TNodeState>;
     fn index<'a>(&'a self, i: usize) -> &'a Option<TNodeState> {
         &self.scenario.get_node_state(i)
+    }
+}
+
+struct SolutionStats<TNodeState: Copy + Eq, const NODE_COUNT: usize> {
+    stop_after_first_solution_found: bool,
+    solutions_found: u64,
+    nodes_resolved_state_in_solutions: [HashMap<TNodeState, u64>; NODE_COUNT],
+    considered_scenarios: u64,
+}
+
+impl<TNodeState: Copy + Eq + Hash, const NODE_COUNT: usize> SolutionStats<TNodeState, NODE_COUNT> {
+    fn record_solution_found(&mut self, scenario: &dyn ScenarioTrait<TNodeState>) {
+        self.solutions_found += 1;
+        if !self.stop_after_first_solution_found {
+            for i in 0..NODE_COUNT {
+                if let Some(resolved_state) = scenario.get_node_state(i) {
+                    let count = self.nodes_resolved_state_in_solutions[i]
+                        .entry(*resolved_state)
+                        .or_insert(0);
+                    *count += 1;
+                } else {
+                    // This node is not constrained by anything. So it is a free radical and shouldn't be counted as selected or unselected
+                    // since solutions are not enumerated based on flipping this.
+                }
+            }
+        }
     }
 }
