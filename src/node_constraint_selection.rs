@@ -18,67 +18,32 @@ bitflags! {
     }
 }
 
-pub struct Scenario<'nodes, 'constraints, TNode, TNodeState: Copy + Eq, const NODE_COUNT: usize> {
-    /// The selection state for each node.
-    pub selection_state: [Option<TNodeState>; NODE_COUNT],
-    pub nodes: &'nodes [TNode; NODE_COUNT],
-    pub constraints: Vec<&'constraints dyn IConstraint<TNodeState>>,
+#[derive(Clone)]
+pub struct Experiment<TNodeState: Copy + Eq, const NODE_COUNT: usize> {
+    selection_state: [Option<TNodeState>; NODE_COUNT],
     version: i32,
 }
 
-impl<'nodes, 'constraints, TNode, TNodeState: Copy + Eq, const NODE_COUNT: usize> Clone
-    for Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT>
-{
-    fn clone(&self) -> Self {
-        Self {
-            selection_state: self.selection_state.clone(),
-            nodes: self.nodes,
-            constraints: self.constraints.clone(),
-            version: self.version,
-        }
-    }
-}
-
-impl<'nodes, 'constraints, TNode, TNodeState: Copy + Eq, const NODE_COUNT: usize>
-    Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT>
-{
-    pub fn new(
-        nodes: &'nodes [TNode; NODE_COUNT],
-    ) -> Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT> {
-        Scenario {
-            selection_state: [None; NODE_COUNT],
-            nodes: nodes,
-            constraints: Vec::new(),
-            version: 0,
-        }
-    }
-
-    pub fn get_constraints<'a>(&'a self) -> &Vec<&dyn IConstraint<TNodeState>> {
-        &self.constraints
-    }
-
-    pub fn add_constraint(&mut self, constraint: &'constraints dyn IConstraint<TNodeState>) {
-        self.version += 1;
-        self.constraints.push(constraint);
-    }
-
-    pub fn remove_constraint(&mut self, index: usize) -> &dyn IConstraint<TNodeState> {
-        self.version += 1;
-        self.constraints.remove(index)
-    }
-}
-
-pub trait ScenarioTrait<TNodeState: Copy + Eq> {
-    fn get_node_state<'nodes>(&'nodes self, index: usize) -> &'nodes Option<TNodeState>;
+pub trait SelectionStateTrait<TNodeState: Copy + Eq> {
+    fn get_node_state<'a>(&'a self, index: usize) -> &'a Option<TNodeState>;
     fn set_node_state(&mut self, index: usize, value: TNodeState);
     fn reset_node_state(&mut self, index: usize, value: Option<TNodeState>);
 }
 
-impl<'nodes, 'constraints, TNode, TNodeState: Copy + Eq + PartialEq, const NODE_COUNT: usize>
-    ScenarioTrait<TNodeState> for Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT>
+impl<TNodeState: Copy + Eq, const NODE_COUNT: usize> Experiment<TNodeState, NODE_COUNT> {
+    fn new() -> Self {
+        Experiment {
+            version: 0,
+            selection_state: [None; NODE_COUNT],
+        }
+    }
+}
+
+impl<TNodeState: Copy + Eq, const NODE_COUNT: usize> SelectionStateTrait<TNodeState>
+    for Experiment<TNodeState, NODE_COUNT>
 {
     fn get_node_state<'a>(&'a self, index: usize) -> &'a Option<TNodeState> {
-        &self[index]
+        &self.selection_state[index]
     }
 
     fn set_node_state(&mut self, index: usize, value: TNodeState) {
@@ -97,26 +62,61 @@ impl<'nodes, 'constraints, TNode, TNodeState: Copy + Eq + PartialEq, const NODE_
     }
 }
 
-impl<'nodes, 'constraints, TNode, TNodeState: Copy + Eq, const NODE_COUNT: usize> Index<usize>
-    for Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT>
+pub struct Scenario<'nodes, TNode, TNodeState: Copy + Eq, const NODE_COUNT: usize> {
+    /// The selection state for each node.
+    pub state: Experiment<TNodeState, NODE_COUNT>,
+    pub nodes: &'nodes [TNode; NODE_COUNT],
+    pub constraints: Vec<Box<dyn IConstraint<TNodeState>>>,
+}
+
+impl<'nodes, TNode, TNodeState: Copy + Eq, const NODE_COUNT: usize>
+    Scenario<'nodes, TNode, TNodeState, NODE_COUNT>
+{
+    pub fn new(
+        nodes: &'nodes [TNode; NODE_COUNT],
+    ) -> Scenario<'nodes, TNode, TNodeState, NODE_COUNT> {
+        Scenario {
+            state: Experiment::new(),
+            nodes: nodes,
+            constraints: Vec::new(),
+        }
+    }
+
+    pub fn get_constraints<'a>(&'a self) -> &Vec<Box<dyn IConstraint<TNodeState>>> {
+        &self.constraints
+    }
+
+    pub fn add_constraint(&mut self, constraint: Box<dyn IConstraint<TNodeState>>) {
+        self.constraints.push(constraint);
+    }
+
+    pub fn remove_constraint(&mut self, index: usize) -> Box<dyn IConstraint<TNodeState>> {
+        self.constraints.remove(index)
+    }
+}
+
+impl<'nodes, TNode, TNodeState: Copy + Eq, const NODE_COUNT: usize> Index<usize>
+    for Scenario<'nodes, TNode, TNodeState, NODE_COUNT>
 {
     type Output = Option<TNodeState>;
     fn index<'a>(&'a self, i: usize) -> &'a Option<TNodeState> {
-        &self.selection_state[i]
+        &self.state.get_node_state(i)
     }
 }
 
 /// Describes some known constraint on the final solution
 /// and tests whether a partial solution satisfies the constraint.
 pub trait IConstraint<TNodeState: Copy + Eq> {
+    /// Gets the nodes that the constraint applies to.
+    fn nodes(&self) -> &[usize];
     /// Gets the state of the constraint with respect to a given scenario.
     /// # Returns
     /// A collection of flags that represent the state.
-    fn get_state(&self, scenario: &dyn ScenarioTrait<TNodeState>) -> ConstraintStates;
+    fn get_state(&self, scenario: &dyn SelectionStateTrait<TNodeState>) -> ConstraintStates;
     /// Sets any indeterminate nodes to selected or unselected based on this constraint, if possible.
     /// # Returns
     /// A value indicating whether any indeterminate nodes were changed.
-    fn resolve(&self, scenario: &mut dyn ScenarioTrait<TNodeState>) -> bool;
+    fn resolve(&self, scenario: &mut dyn SelectionStateTrait<TNodeState>) -> bool;
 }
 
 #[derive(Debug)]
@@ -130,7 +130,11 @@ pub struct SelectionCountConstraint<const NODE_COUNT: usize> {
 }
 
 impl<const NODE_COUNT: usize> IConstraint<bool> for SelectionCountConstraint<NODE_COUNT> {
-    fn get_state(&self, scenario: &dyn ScenarioTrait<bool>) -> ConstraintStates {
+    fn nodes(&self) -> &[usize] {
+        &self.nodes
+    }
+
+    fn get_state(&self, scenario: &dyn SelectionStateTrait<bool>) -> ConstraintStates {
         let stats = self.get_node_stats(scenario);
         let mut states = ConstraintStates::NONE;
 
@@ -155,7 +159,7 @@ impl<const NODE_COUNT: usize> IConstraint<bool> for SelectionCountConstraint<NOD
 
         states
     }
-    fn resolve(&self, scenario: &mut dyn ScenarioTrait<bool>) -> bool {
+    fn resolve(&self, scenario: &mut dyn SelectionStateTrait<bool>) -> bool {
         let stats = self.get_node_stats(scenario);
         if self.can_resolve_by_unselecting(&stats) {
             // If the maximum nodes have already been selected, unselect the rest.
@@ -199,7 +203,7 @@ impl<const NODE_COUNT: usize> SelectionCountConstraint<NODE_COUNT> {
 
     fn mark_indeterminate_nodes(
         &self,
-        scenario: &mut dyn ScenarioTrait<bool>,
+        scenario: &mut dyn SelectionStateTrait<bool>,
         select: bool,
     ) -> bool {
         let mut changed = false;
@@ -213,7 +217,7 @@ impl<const NODE_COUNT: usize> SelectionCountConstraint<NODE_COUNT> {
         changed
     }
 
-    fn get_node_stats(&self, scenario: &dyn ScenarioTrait<bool>) -> NodeStats {
+    fn get_node_stats(&self, scenario: &dyn SelectionStateTrait<bool>) -> NodeStats {
         let mut selected = 0;
         let mut unselected = 0;
         let mut indeterminate = 0;
@@ -241,13 +245,17 @@ impl<const NODE_COUNT: usize> SelectionCountConstraint<NODE_COUNT> {
 
 #[derive(Debug)]
 pub struct SetOneNodeValueConstraint<TNodeState: Copy + Eq> {
-    node: usize,
+    node: [usize; 1],
     value: TNodeState,
 }
 
 impl<TNodeState: Copy + Eq + Eq> IConstraint<TNodeState> for SetOneNodeValueConstraint<TNodeState> {
-    fn get_state(&self, scenario: &dyn ScenarioTrait<TNodeState>) -> ConstraintStates {
-        match scenario.get_node_state(self.node) {
+    fn nodes(&self) -> &[usize] {
+        &self.node
+    }
+
+    fn get_state(&self, scenario: &dyn SelectionStateTrait<TNodeState>) -> ConstraintStates {
+        match scenario.get_node_state(self.node[0]) {
             None => {
                 ConstraintStates::RESOLVABLE
                     | ConstraintStates::BREAKABLE
@@ -263,9 +271,9 @@ impl<TNodeState: Copy + Eq + Eq> IConstraint<TNodeState> for SetOneNodeValueCons
         }
     }
 
-    fn resolve(&self, scenario: &mut dyn ScenarioTrait<TNodeState>) -> bool {
-        if let None = scenario.get_node_state(self.node) {
-            scenario.set_node_state(self.node, self.value);
+    fn resolve(&self, scenario: &mut dyn SelectionStateTrait<TNodeState>) -> bool {
+        if let None = scenario.get_node_state(self.node[0]) {
+            scenario.set_node_state(self.node[0], self.value);
             true
         } else {
             false
@@ -287,63 +295,61 @@ impl NodeStats {
 
 pub struct SolutionBuilder<
     'nodes,
-    'constraints,
     TNode,
     TNodeState: Copy + Eq,
     const NODE_COUNT: usize,
     const NODE_STATE_COUNT: usize,
 > {
-    pub scenario: Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT>,
-    _resolved_states: [TNodeState; NODE_STATE_COUNT],
+    pub scenario: Scenario<'nodes, TNode, TNodeState, NODE_COUNT>,
+    resolved_states: [TNodeState; NODE_STATE_COUNT],
     full_refresh_needed: bool,
 }
 
 impl<
         'nodes,
-        'constraints,
         TNode,
         TNodeState: Copy + Eq + Hash,
         const NODE_COUNT: usize,
         const NODE_STATE_COUNT: usize,
-    > SolutionBuilder<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT, NODE_STATE_COUNT>
+    > SolutionBuilder<'nodes, TNode, TNodeState, NODE_COUNT, NODE_STATE_COUNT>
 {
     pub fn new(
         nodes: &'nodes [TNode; NODE_COUNT],
         resolved_states: [TNodeState; NODE_STATE_COUNT],
-    ) -> SolutionBuilder<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT, NODE_STATE_COUNT>
-    {
+    ) -> SolutionBuilder<'nodes, TNode, TNodeState, NODE_COUNT, NODE_STATE_COUNT> {
         SolutionBuilder {
             scenario: Scenario::new(nodes),
-            _resolved_states: resolved_states,
+            resolved_states: resolved_states,
             full_refresh_needed: false,
         }
     }
 
     pub fn resolve_partially(&mut self) {
-        let mut candidate = self.scenario.clone();
+        let mut experiment = self.scenario.state.clone();
         if self.full_refresh_needed {
             for i in 0..NODE_COUNT {
-                candidate.reset_node_state(i, None);
+                experiment.reset_node_state(i, None);
             }
         }
 
-        Self::resolve_scenario_partially(&mut candidate);
-        self.scenario = candidate;
+        Self::resolve_scenario_partially(&self.scenario, &mut experiment);
+        self.scenario.state = experiment;
         self.full_refresh_needed = false
     }
 
     fn resolve_scenario_partially(
-        scenario: &mut Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT>,
+        scenario: &Scenario<'nodes, TNode, TNodeState, NODE_COUNT>,
+        experiment: &mut Experiment<TNodeState, NODE_COUNT>,
     ) {
         // Keep looping through constraints asking each one to resolve nodes until no changes are applied.
         loop {
             let mut any_resolved = false;
 
             for i in 0..scenario.constraints.len() {
-                let constraint = scenario.constraints[i];
-                let prior_version = scenario.version;
-                let resolved = constraint.resolve(scenario);
-                if resolved && prior_version == scenario.version {
+                let constraint = &scenario.constraints[i];
+                let prior_version = experiment.version;
+                let resolved = constraint.resolve(experiment);
+                if resolved && prior_version == experiment.version {
                     panic!("Constraint returned true without changing the scenario.");
                 }
 
@@ -356,15 +362,47 @@ impl<
         }
     }
 
+    pub fn analyze_solutions(&self) -> SolutionAnalysis<TNodeState, NODE_COUNT> {
+        let mut experiment = self.scenario.state.clone();
+        Self::resolve_scenario_partially(&self.scenario, &mut experiment);
+        let mut stats = SolutionStats::<TNodeState, NODE_COUNT>::new();
+        self.enumerate_solutions(&self.scenario, &experiment, 0, &mut stats);
+        SolutionAnalysis {
+            viable_solutions_found: stats.solutions_found,
+            node_value_count: stats.nodes_resolved_state_in_solutions,
+        }
+    }
+
+    fn get_constraints_by_node<'a>(
+        scenario: &'a Scenario<'nodes, TNode, TNodeState, NODE_COUNT>,
+    ) -> Vec<Vec<&'a Box<dyn IConstraint<TNodeState>>>> {
+        let mut constraints_by_node: Vec<Vec<&Box<dyn IConstraint<TNodeState>>>> =
+            Vec::with_capacity(NODE_COUNT);
+        for _ in 0..NODE_COUNT {
+            constraints_by_node.push(Vec::new())
+        }
+
+        for constraint in scenario.constraints.iter() {
+            for node_index in constraint.nodes() {
+                let vec = &mut constraints_by_node[*node_index];
+                vec.push(constraint);
+            }
+        }
+
+        constraints_by_node
+    }
+
     fn enumerate_solutions(
-        basis: &Scenario<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT>,
+        &self,
+        scenario: &Scenario<'nodes, TNode, TNodeState, NODE_COUNT>,
+        basis: &Experiment<TNodeState, NODE_COUNT>,
         first_node: usize,
         stats: &mut SolutionStats<TNodeState, NODE_COUNT>,
     ) {
         stats.considered_scenarios += 1;
         let mut can_any_constraint_be_broken = false;
-        for j in 0..basis.constraints.len() {
-            let constraint = basis.constraints[j];
+        for j in 0..scenario.constraints.len() {
+            let constraint = &scenario.constraints[j];
             let state = constraint.get_state(basis);
             if !state.intersects(ConstraintStates::SATISFIABLE) {
                 return;
@@ -380,14 +418,64 @@ impl<
             return;
         }
 
-        for i in first_node..NODE_COUNT {
+        let constraints_by_node = Self::get_constraints_by_node(scenario);
+
+        let mut i = first_node;
+        while i < NODE_COUNT {
             if let Some(_) = basis.get_node_state(i) {
                 // Skip any node that already has a set value.
+                i += 1;
                 continue;
             }
 
             // We don't need to enumerate possibilities for a node for which no constraints exist.
+            let applicable_constraints = &constraints_by_node[i];
+            if applicable_constraints.is_empty() {
+                // Skip any node that can be any value without impact to constraints.
+                i += 1;
+                continue;
+            }
 
+            // Try selecting the node. In doing so, resolve whatever nodes we can immediately.
+            for value in self.resolved_states {
+                let mut experiment = basis.clone();
+                experiment.set_node_state(i, value);
+                self.resolve_by_cascading_constraints(
+                    scenario,
+                    &mut experiment,
+                    applicable_constraints,
+                );
+                self.enumerate_solutions(scenario, &experiment, i + 1, stats);
+
+                if stats.stop_after_first_solution_found && stats.solutions_found > 0 {
+                    return;
+                }
+            }
+
+            // Once we drill into one node, we don't want to drill into any more nodes since
+            // we did that via our recursive call.
+            break;
+        }
+
+        if i >= NODE_COUNT {
+            stats.record_solution_found(basis);
+        }
+    }
+
+    fn resolve_by_cascading_constraints(
+        &self,
+        scenario: &Scenario<'nodes, TNode, TNodeState, NODE_COUNT>,
+        experiment: &mut Experiment<TNodeState, NODE_COUNT>,
+        applicable_constraints: &[&Box<dyn IConstraint<TNodeState>>],
+    ) {
+        let mut any_resolved = false;
+        for constraint in applicable_constraints.iter() {
+            any_resolved |= constraint.resolve(experiment);
+        }
+
+        // If any nodes changed, engage a regular resolve operation
+        if any_resolved {
+            Self::resolve_scenario_partially(scenario, experiment);
         }
     }
 }
@@ -399,24 +487,37 @@ impl<
         TNodeState: Copy + Eq,
         const NODE_COUNT: usize,
         const NODE_STATE_COUNT: usize,
-    > Index<usize>
-    for SolutionBuilder<'nodes, 'constraints, TNode, TNodeState, NODE_COUNT, NODE_STATE_COUNT>
+    > Index<usize> for SolutionBuilder<'nodes, TNode, TNodeState, NODE_COUNT, NODE_STATE_COUNT>
 {
     type Output = Option<TNodeState>;
     fn index<'a>(&'a self, i: usize) -> &'a Option<TNodeState> {
-        &self.scenario.get_node_state(i)
+        &self.scenario.state.get_node_state(i)
     }
 }
 
 struct SolutionStats<TNodeState: Copy + Eq, const NODE_COUNT: usize> {
     stop_after_first_solution_found: bool,
     solutions_found: u64,
-    nodes_resolved_state_in_solutions: [HashMap<TNodeState, u64>; NODE_COUNT],
+    nodes_resolved_state_in_solutions: Vec<HashMap<TNodeState, u64>>,
     considered_scenarios: u64,
 }
 
 impl<TNodeState: Copy + Eq + Hash, const NODE_COUNT: usize> SolutionStats<TNodeState, NODE_COUNT> {
-    fn record_solution_found(&mut self, scenario: &dyn ScenarioTrait<TNodeState>) {
+    fn new() -> Self {
+        let mut vector: Vec<HashMap<TNodeState, u64>> = Vec::with_capacity(NODE_COUNT);
+        for _ in 0..NODE_COUNT {
+            vector.push(HashMap::new());
+        }
+
+        SolutionStats {
+            considered_scenarios: 0,
+            solutions_found: 0,
+            stop_after_first_solution_found: false,
+            nodes_resolved_state_in_solutions: vector,
+        }
+    }
+
+    fn record_solution_found(&mut self, scenario: &dyn SelectionStateTrait<TNodeState>) {
         self.solutions_found += 1;
         if !self.stop_after_first_solution_found {
             for i in 0..NODE_COUNT {
@@ -432,4 +533,9 @@ impl<TNodeState: Copy + Eq + Hash, const NODE_COUNT: usize> SolutionStats<TNodeS
             }
         }
     }
+}
+
+pub struct SolutionAnalysis<TNodeState: Hash, const NODE_COUNT: usize> {
+    pub viable_solutions_found: u64,
+    pub node_value_count: Vec<HashMap<TNodeState, u64>>,
 }
